@@ -199,24 +199,43 @@ $('forecast-method').textContent=names.map((n,i)=>`${n}${fmt(forecastComponents[
 function renderGain(){const gain=Number($('gain-slider').value);$('gain-label').textContent='+'+gain+'%';$('gain-result').textContent=fmt(forecast(gain))+' / '+forecastTotalFull;}
 $('gain-slider').addEventListener('input',renderGain);renderGain();
 const subjectChart=chart('subject-chart',{});
+// A month-only record has no invented day. It sorts at the beginning of its
+// month for display, with an explicit uncertainty marker and tooltip note.
+function subjectTimeline(name){
+ const raw=DATA.exams.map(e=>({id:e.id,label:e.label,score:e.scores[name],full:fullFor(e,name),rank:e.schoolRanks[name],kind:'综合考试',major:true,when:e.date||e.period||e.label,scoreNote:e.scoreNote}))
+  .concat(assessments.filter(a=>a.subject===name).map(a=>({id:a.id,label:a.label,score:a.score,full:a.full,rank:a.schoolRank,kind:'单科测验',major:false,when:a.date,scoreNote:a.scoreNote})));
+ const records=raw.map((r,order)=>{
+  const match=String(r.when||'').match(/^(\d{4})[-.](\d{1,2})(?:[-.](\d{1,2}))?/);
+  const month=match?match[1]+'-'+match[2].padStart(2,'0'):null;
+  const day=match?.[3];
+  const precision=month?(day?'day':'month'):'unknown';
+  return {...r,order,precision,sortKey:month?(day?month+'-'+day.padStart(2,'0'):month):null,
+   axisLabel:r.label+(precision==='month'?'*':''),
+   dateNote:precision==='month'?'日期仅明确到'+month+'，暂列在该月开头，月内先后待核。':precision==='unknown'?'日期待核，独立展示，位置不代表考试先后。':''};
+ });
+ return {dated:records.filter(r=>r.sortKey).sort((a,b)=>a.sortKey.localeCompare(b.sortKey)||a.order-b.order),undated:records.filter(r=>!r.sortKey)};
+}
 let mode='rate';
 function renderSubject(){
  const name=$('subject-select').value, sub=DATA.subjects.find(s=>s.name===name);
- const recent=assessments.filter(a=>a.subject===name&&a.date);
- const undated=assessments.filter(a=>a.subject===name&&!a.date);
  const pending=materials.filter(m=>m.subject===name);
- const dated=DATA.exams.map(e=>({label:e.label,score:e.scores[name],full:fullFor(e,name),rank:e.schoolRanks[name],kind:'综合考试',scoreNote:e.scoreNote})).concat(recent.map(a=>({label:a.label,score:a.score,full:a.full,rank:a.schoolRank,kind:'单科测验',scoreNote:a.scoreNote})));
- // Undated results are visible in their own category, never joined to a chronology.
- const records=dated.concat(undated.map(a=>({label:a.label,score:a.score,full:a.full,rank:a.schoolRank,kind:'日期待核 · 独立展示',scoreNote:a.scoreNote})));
+ const {dated,undated}=subjectTimeline(name),records=dated.concat(undated);
  const r=latestForSubject(name);
  const values=records.map(e=>mode==='rank'?e.rank:(e.score==null?null:+(e.score/e.full*100).toFixed(1)));
  $('subject-title').textContent=name+' · '+(mode==='rank'?'级排名次':'按各次满分计算的得分率');
- $('subject-summary').textContent=`本轮展示：${r.label}，${fmt(r.score)} / ${r.full}（${fmt(r.score/r.full*100)}%）。同满分的综合考试原始均分${fmt(means[name])} / ${sub.full}，未混入短卷。${r.scoreNote?' '+r.scoreNote:''}${undated.map(a=>' '+a.label+'：'+fmt(a.score)+'/'+a.full+(a.schoolRank!=null?'，级排'+a.schoolRank:'')+'；已在图右侧独立展示，位置不代表考试先后。').join('')}${pending.map(m=>' '+m.label+'尚未公布成绩；仅作单独粗估，不进入走势图。').join('')}`;
- $('trend-note').textContent=(mode==='rank'?'综合考试和单科测验分组连线，不是跨组的时间顺序。数字越小，名次越靠前。未提供的排名留空；参考人数和群体未完全核清，不能直接把名次变化当成进退步。':'左组圆点为综合考试序列，右组菱形为有日期的单科测验序列；两组分别连线，横向不表示两组之间的时间先后。各次按真实满分折算；范围、难度不同，不能单凭图线判断能力升降。')+(undated.length?' 方块为日期待核成绩，独立显示，不与折线相连，也不表示发生在最近一次考试之后。':'');
+ $('subject-summary').textContent=`本轮展示：${r.label}，${fmt(r.score)} / ${r.full}（${fmt(r.score/r.full*100)}%）。同满分的综合考试原始均分${fmt(means[name])} / ${sub.full}，未混入短卷。${r.scoreNote?' '+r.scoreNote:''}${undated.map(a=>' '+a.label+'：'+fmt(a.score)+'/'+a.full+(a.rank!=null?'，级排'+a.rank:'')+'；已在图右侧独立展示，位置不代表考试先后。').join('')}${pending.map(m=>' '+m.label+'尚未公布成绩；仅作单独粗估，不进入走势图。').join('')}`;
+ $('trend-note').textContent='大考与小测合并按时间排列：◆ 大菱形为大考，● 小圆点为小测。'+(dated.some(r=>r.precision==='month')?' 带*的大考只明确到月份，暂列在该月开头，月内先后待核。':'')+(mode==='rank'?' 数字越小，名次越靠前；未提供的排名留空，参考群体不同时不能直接判断进退步。':' 各次按实际满分计算得分率；范围、难度不同，不能单凭图线判断能力升降。')+(undated.length?' ■ 方块为日期待核成绩，独立显示，不与折线相连。':'');
  const pointLabel={show:true,position:mode==='rank'?'bottom':'top',formatter:p=>p.value==null?'':p.value+(mode==='rank'?'':'%'),fontSize:11,color:'#1a302a'};
- subjectChart.setOption({tooltip:{trigger:'axis',confine:true,formatter:items=>items.filter(p=>p.value!=null).map(p=>{const r=records[p.dataIndex];return esc(r.label)+'<br>'+esc(r.kind)+' · '+(mode==='rank'?'级排 '+r.rank:fmt(r.score)+' / '+r.full+' · '+fmt(p.value)+'%')+(r.scoreNote?'<br>'+esc(r.scoreNote):'');}).join('<br>')},grid:{left:48,right:24,top:32,bottom:88},xAxis:{type:'category',data:records.map(r=>r.label),axisLabel:{...optionLabel(),fontSize:9,rotate:22},axisTick:{show:false},axisLine:{lineStyle:{color:'#dce6e1'}}},yAxis:{type:'value',inverse:mode==='rank',min:mode==='rank'?1:0,max:mode==='rank'?null:100,splitLine:{lineStyle:{color:'#eaf0ec'}},axisLabel:{color:'#566c64',fontSize:11,formatter:mode==='rank'?'{value}':'{value}%'}},series:[{name:'综合考试',type:'line',data:values.map((v,i)=>({value:i<DATA.exams.length?v:null,symbol:records[i].kind==='单科测验'?'diamond':'circle',symbolSize:records[i].kind==='单科测验'?12:8})),connectNulls:false,itemStyle:{color:colors[names.indexOf(name)]},lineStyle:{width:2},label:pointLabel},{name:'单科测验',type:'line',data:values.map((v,i)=>i>=DATA.exams.length&&i<dated.length?v:null),symbol:'diamond',symbolSize:12,connectNulls:false,itemStyle:{color:colors[names.indexOf(name)]},lineStyle:{width:2,type:'dashed'},label:pointLabel},{name:'日期待核 · 独立展示',type:'scatter',symbol:'rect',symbolSize:13,data:values.map((v,i)=>i>=dated.length?v:null),itemStyle:{color:colors[names.indexOf(name)],borderWidth:2,borderColor:'#fff',opacity:1},label:pointLabel}]},true);
+ subjectChart.setOption({
+  tooltip:{trigger:'axis',confine:true,formatter:items=>items.filter(p=>p.value!=null).map(p=>{const r=records[p.dataIndex];return esc(r.label)+'<br>'+esc(r.major?'大考 · '+r.kind:r.kind)+' · '+(mode==='rank'?'级排 '+r.rank:fmt(r.score)+' / '+r.full+' · '+fmt(p.value)+'%')+(r.dateNote?'<br>'+esc(r.dateNote):'')+(r.scoreNote?'<br>'+esc(r.scoreNote):'');}).join('<br>')},
+  grid:{left:48,right:24,top:38,bottom:88},
+  xAxis:{type:'category',data:records.map(r=>r.axisLabel),axisLabel:{...optionLabel(),fontSize:9,rotate:22},axisTick:{show:false},axisLine:{lineStyle:{color:'#dce6e1'}}},
+  yAxis:{type:'value',inverse:mode==='rank',min:mode==='rank'?1:0,max:mode==='rank'?null:100,splitLine:{lineStyle:{color:'#eaf0ec'}},axisLabel:{color:'#566c64',fontSize:11,formatter:mode==='rank'?'{value}':'{value}%'}},
+  series:[{name:'按时间排列的成绩',type:'line',data:values.map((v,i)=>({value:i<dated.length?v:null,symbol:records[i].major?'diamond':'circle',symbolSize:records[i].major?19:7,itemStyle:records[i].major?{borderWidth:2,borderColor:'#fff',shadowBlur:5,shadowColor:'#aabdb4'}:{borderWidth:0},label:records[i].major?{fontWeight:700}:undefined})),connectNulls:false,itemStyle:{color:colors[names.indexOf(name)]},lineStyle:{width:2},label:pointLabel},
+   {name:'日期待核 · 独立展示',type:'scatter',symbol:'rect',symbolSize:12,data:values.map((v,i)=>i>=dated.length?v:null),itemStyle:{color:colors[names.indexOf(name)],borderWidth:2,borderColor:'#fff',opacity:1},label:pointLabel}]
+ },true);
  $('mode-score').setAttribute('aria-pressed',mode==='rate');$('mode-rank').setAttribute('aria-pressed',mode==='rank');
- $('subject-chart').setAttribute('aria-label',name+'历次'+(mode==='rank'?'级排名次':'得分率')+'图；每次原始得分与满分见提示');
+ $('subject-chart').setAttribute('aria-label',name+'大考与小测按时间排列的'+(mode==='rank'?'级排名次':'得分率')+'图；大菱形为大考，小圆点为小测，星号表示日期仅到月份');
 }
 $('subject-select').addEventListener('change',renderSubject);
 $('mode-score').addEventListener('click',()=>{mode='rate';renderSubject();});
